@@ -1,107 +1,45 @@
+# WiFi Remote ID Spoofer & Simulator
 
-# ESP32 Drone Remote ID Spoofer & Simulator
- 
-A powerful Flask-based web application and ESP32 firmware for spoofing and simulating drone Remote ID broadcasts over Wi-Fi. Features real‑time map-based flight path design, USB serial integration, dynamic Remote ID and MAC spoofing, and full play/pause/stop control.
- 
-## 🚀 Features
- 
-- **USB Serial Port Selection**  
-  Centered, monospace-styled screen for selecting a single USB device with ASCII art header.
- 
-- **Interactive Map Simulator**  
-  - Click to drop waypoints; first waypoint highlighted lime-green, last highlighted purple.  
-  - Set pilot location separately.  
-  - Play, Pause, and Stop buttons (green, orange, red outlines) control simulated flight and serial broadcasts.  
-  - Real-time drone icon (“🛸”) moves smoothly along a path at configurable speed (default 25 mph).  
-  - Looping paths draw connecting light-blue line between final and first waypoint.  
-  - Pause retains current position; Stop halts all serial transmissions immediately.
- 
-- **Dynamic Remote ID & MAC Spoofing**  
-  - Override Remote ID fields and pilot info via on-screen form in hot-pink labels.  
-  - Default MAC starts with `60:60:1f`, random suffix each boot; can also be set manually from the GUI (triggering ESP32 reboot).
- 
-- **Web UI UX**  
-  - OLED-style black background with neon lime, purple, and hot-pink accents.  
-  - Drone/pilot icons (“🛸” and “👤”) with colored outlines indicating status:  
-    - **Green** circle = active (Play),  
-    - **Orange** circle = paused,  
-    - **Red** circle = stopped.  
-  - Connected/disconnected USB status in bottom-right, updating instantly (red/green text).
- 
-- **JSON-over-Serial Protocol**  
-  - ESP32 firmware receives full Remote ID JSON payload via USB serial from Python script.  
-  - Serial messages only sent when simulation is playing; messages stop instantly on “Stop”.  
-  - Example JSON structure:
-    ```json
-    {
-      "mac": "60:60:1f:AA:BB:CC",
-      "basic_id": "DRONE1234",
-      "drone_lat": 35.5934,
-      "drone_long": -82.5546,
-      "pilot_lat": 35.5920,
-      "pilot_long": -82.5530,
-      "drone_altitude": 120.5,
-      "timestamp": "2025-04-21T13:00:00Z"
-    }
-    ```
- 
-## 📦 Installation
- 
-1. **Clone the repository**:
+**Disclaimer:** This software is intended for educational and research purposes only. It is your responsibility to ensure compliance with all local, national, and international laws and regulations regarding radio transmissions, privacy, and aviation safety. The authors and distributors of this software are not liable for any misuse or legal violations that may result. Always obtain proper authorization before transmitting any signals or simulating devices in real-world environments.
+
+## Overview
+
+This project provides:
+- **Firmware** for ESP32/ESP32-S3 microcontrollers capable of spoofing WiFi-based Remote ID broadcasts (both NDP/NAN and legacy vendor IE frames).
+- **Flask-based Web UI** to control the drone simulation, including map-based flight path design, real-time playback controls, pilot location setting, MAC override, and USB port management.
+- **Python simulator** that feeds JSON payloads over serial to the firmware, enabling live control of drone and pilot position, speed, and Remote ID metadata.
+
+## Features
+
+- **Dynamic MAC Spoofing**: Auto-generates a randomized suffix after a fixed `60:60:1F` prefix on each boot; user can override via Web UI.
+- **Map-based Flight Planner**: Click to drop waypoints; waypoints are highlighted (start = lime green, end = hot purple), with optional loop-back indicator.
+- **Real-time Playback**: Play, Pause (orange highlight), and Stop (red highlight) controls. Pause retains current position; Stop halts all serial transmissions.
+- **Pilot Location Control**: Separate control box to select and lock pilot coordinates on the map.
+- **USB Serial Management**: Auto-detects and displays connection status; immediate red/green updates on connect/disconnect.
+- **JSON RPC Protocol**: Structured payloads include fields for `mac`, `drone_lat`, `drone_long`, `drone_altitude`, `pilot_lat`, `pilot_long`, `basic_id`, `status`, and more.
+
+## Ethics & Legality
+
+- **Compliance First**: Before deploying or testing, verify that spoofing WiFi signals is legal in your jurisdiction. Many countries have strict regulations around radio emissions and aviation safety.
+- **Responsible Use**: This tool should never be used to hinder, confuse, or endanger actual aircraft operations, law enforcement, or public safety.
+- **Non-endorsement**: The authors do not endorse any illicit use. You assume all risks and legal responsibilities.
+
+## Getting Started
+
+1. **Clone the repository**
    ```bash
-   git clone https://github.com/yourusername/esp32-drone-spoofer.git
-   cd esp32-drone-spoofer
+   git clone https://github.com/yourusername/esp-wifi-remoteid-spoofer.git
+   cd esp-wifi-remoteid-spoofer
    ```
- 
-2. **Setup Python environment**:
+2. **Install Dependencies**
    ```bash
-   python3 -m venv venv
-   source venv/bin/activate
    pip install -r requirements.txt
    ```
- 
-3. **Install PlatformIO and build firmware**:
-   ```bash
-   pip install platformio
-   cd firmware
-   platformio run --environment seeed_xiao_esp32s3
-   platformio run --target upload
-   ```
- 
-4. **Run the Flask App**:
-   ```bash
-   cd ../spoof
-   python spoof.py
-   ```
-   Open `http://localhost:5000` in your browser.
- 
-## ⚙️ Configuration
- 
-- **Play Speed**: Adjust speed (mph) in the “Speed” field before playing.
-- **MAC Override**: Enter full MAC under “Override MAC” and click **Set MAC** (hot-pink). ESP32 will reboot with new spoofed MAC.
-- **Pilot Location**: Click “Set Pilot Location” (hot-pink) then click on map; displayed persistently.
-- **Waypoints**: Click on map to add waypoints (lime); first and last waypoints highlighted.
- 
-## 🛠️ Usage
- 
-1. Select your USB serial device.
-2. Design your flight path and set pilot location.
-3. Optionally override Remote ID and MAC.
-4. Click **Play** (green) to start simulating and broadcasting.
-5. **Pause** (orange) to freeze position (serial continues sending last state).
-6. **Stop** (red) to halt all serial traffic immediately; icon remains on map.
- 
-## 🔄 Looping Paths
- 
-- Loops automatically connect final waypoint back to the first with a solid light-blue line.
-- On **Play**, path loops seamlessly.
- 
-## 💡 Serial Protocol
- 
-- Messages sent every **200 ms** during simulation.
-- JSON payload fields correspond to the Remote ID spec.
-- Transmission halts instantly on **Stop**.
- 
-## 📝 License
- 
-MIT © Your Name
+3. **Configure & Run**
+   - Launch the Flask app: `python mapper.py`
+   - Select your USB serial port on the initial screen.
+   - Use the Web UI to design flight paths and control playback.
+
+## License
+
+Distributed under the MIT License. See `LICENSE` for details.
