@@ -1,6 +1,6 @@
 # WiFi Remote ID Spoofer & Simulator
 
-![WiFi Remote ID Spoofer & Simulator Logo](A_digital_vector_graphic_displays_a_logo_combining.png)
+![WiFi Remote ID Spoofer & Simulator Logo](spoof.png)
 
 **Disclaimer:** This software is intended for educational and research purposes only...
 
