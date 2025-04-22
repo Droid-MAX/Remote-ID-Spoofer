@@ -142,25 +142,20 @@ HTML = """
   .leaflet-control-attribution { display:none !important; }
   @keyframes flashPurple { 0%{background-color:purple;}100%{background-color:transparent;} }
   .flashPurple { animation:flashPurple 0.3s ease; background-color:purple !important; }
-  #clearPathsContainer {
-    position: absolute;
-    bottom: 10px;
-    left: 10px;
-    z-index: 1000;
-    text-align: center;
-  }
   #clearPaths {
-      background: purple;
-      border: 1px solid lime;
-      border-radius: 6px;
-      color: lime;
-      padding: 5px 10px;
+      width: 100%;
+      margin-top: 10px;
+      background: transparent;
+      border: 1px solid #FF00FF !important;
+      color: #FF00FF !important;
+      border-radius: 0 !important;
+      padding: 8px 0;
       font-family: monospace;
       cursor: pointer;
   }
   #clearPaths:hover {
-      background: purple;
-      color: lime;
+      background: transparent;
+      color: #FF00FF;
   }
 </style>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -198,12 +193,10 @@ HTML = """
       <button id="pause" style="width:32%; margin:0;">Pause</button>
       <button id="stop" style="width:32%; margin:0;">Stop</button>
     </div>
+    <button id="clearPaths">Clear Paths</button>
   </div>  <!-- end of controlBody -->
 </div>  <!-- end of control -->
 <div id="serialStatus"></div>
-<div id="clearPathsContainer">
-  <button id="clearPaths">Clear Paths</button>
-</div>
 <script>
   var map = L.map('map',{attributionControl:false}).setView([0,0],3);
   L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{maxZoom:19}).addTo(map);
@@ -370,6 +363,7 @@ HTML = """
   updateSerialStatus();
   // Clear all waypoints and path data
   document.getElementById('clearPaths').onclick = () => {
+    flash('clearPaths');
     // Remove existing waypoint markers
     waypointMarkers.forEach(m => map.removeLayer(m));
     waypointMarkers = [];
