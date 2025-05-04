@@ -1,4 +1,4 @@
-# WiFi Remote ID Spoofer & Simulator
+ju# WiFi Remote ID Spoofer & Simulator
 
 ![WiFi Remote ID Spoofer & Simulator Logo](spoof.png)
 
@@ -47,8 +47,8 @@ To use this project, you will need the Seeed XIAO ESP32-S3 microcontroller, whic
 ### Firmware Upload
 To upload the firmware to the Seeed XIAO ESP32-S3:
 1. Connect the XIAO ESP32-S3 to your computer via USB.
-2. Open the Arduino IDE and select the appropriate board and port.
-3. Upload the firmware code to the device.
+2. Open the PlatformIO extension in VScode.
+3. Build/Upload the firmware code to the device.
 
 ### Running the Web Simulator
 To run the web simulator:
