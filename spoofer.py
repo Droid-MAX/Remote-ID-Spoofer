@@ -181,9 +181,6 @@ HTML = """
     <label style="color:#FF00FF;">Speed (mph):
       <input id="speed" type="number" value="25"/>
     </label>
-    <label style="color:#FF00FF; margin-top:8px;">Pilot ID:
-      <input id="pilotId" placeholder="Pilot ID"/>
-    </label>
     <button id="setPilot">Set Pilot Location</button>
     <small style="color:#7DF9FF; display:block; text-align:center; margin-top:4px;">
       Select pilot location before pressing play
@@ -240,7 +237,6 @@ HTML = """
     let missionData = {
       basic_id: document.getElementById('basicId').value,
       drone_altitude: parseInt(document.getElementById('alt').value) || 0,
-      pilot_id: document.getElementById('pilotId').value,
       path: path
     };
     fetch('/api/start', {
@@ -287,7 +283,6 @@ HTML = """
         let d = droneMarker.getLatLng(), p = pilotMarker.getLatLng();
         let payload = {
           basic_id: document.getElementById('basicId').value,
-          pilot_id: document.getElementById('pilotId').value,
           drone_altitude: parseInt(document.getElementById('alt').value) || 0,
           drone_lat: d.lat, drone_long: d.lng,
           pilot_lat: p.lat, pilot_long: p.lng
