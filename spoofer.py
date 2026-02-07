@@ -23,17 +23,20 @@ ________                                 _________                     _____
 app = Flask(__name__)
 
 BAUD_RATE = 115200
-current_port = "/dev/ttyUSB0"
-selected_port = None
-ser = None
-ser_lock = threading.Lock()
+MAX_BOARDS = 3
 
-try:
-    ser = serial.Serial(current_port, BAUD_RATE, timeout=1)
-except Exception:
-    ser = None
+# multi-board state: list of dicts {port, ser, lock, label}
+boards = []
+boards_lock = threading.Lock()
 
-atexit.register(lambda: ser.close() if ser and ser.is_open else None)
+def cleanup_boards():
+    for b in boards:
+        try:
+            if b['ser'] and b['ser'].is_open:
+                b['ser'].close()
+        except Exception:
+            pass
+atexit.register(cleanup_boards)
 
 PATH_CSV = "paths.csv"
 try:
@@ -134,19 +137,35 @@ PORT_SELECT_HTML = """
       inspired by <a href="https://github.com/d0tslash" target="_blank" style="color:#7DF9FF;text-decoration:none;border-bottom:1px solid rgba(125,249,255,0.25);">d0tslash</a> &amp; <span style="color:#ff00ff;">H.A.R.D</span> <span style="color:rgba(255,255,255,0.35);">// Hackers Against Remote ID</span>
     </div>
     <div class="divider"></div>
-    <h2>Select Serial Interface</h2>
-    <form method="post">
-      <select name="serial_port">
-        <option value="">[ SELECT PORT ]</option>
-        {% for p in ports %}
-          <option value="{{ p }}">{{ p }}</option>
-        {% endfor %}
-      </select>
-      <button type="submit">Initialize Connection</button>
+    <h2>Serial Interfaces // Up to 3 boards</h2>
+    <form method="post" style="gap:14px;">
+      {% for i in range(3) %}
+      <div style="display:flex;gap:10px;align-items:center;width:100%;max-width:660px;">
+        <span style="color:#ff00ff;font-size:clamp(14px,1.6vw,18px);white-space:nowrap;min-width:80px;text-align:right;">BOARD {{ i+1 }}</span>
+        <select name="port_{{ i }}" style="flex:1;font-size:clamp(14px,1.4vw,18px);padding:14px 16px;">
+          <option value="">[ NONE ]</option>
+          {% for p in ports %}
+            <option value="{{ p }}" {% if active_ports[i]==p %}selected{% endif %}>{{ p }}</option>
+          {% endfor %}
+        </select>
+        <select name="label_{{ i }}" style="width:120px;font-size:clamp(12px,1.2vw,16px);padding:14px 10px;color:#7DF9FF;border-color:rgba(125,249,255,0.3);background:rgba(0,20,0,0.8);">
+          <option value="S3" {% if active_labels[i]=='S3' %}selected{% endif %}>ESP32-S3</option>
+          <option value="C5" {% if active_labels[i]=='C5' %}selected{% endif %}>ESP32-C5</option>
+        </select>
+      </div>
+      {% endfor %}
+      <button type="submit">Initialize Connections</button>
     </form>
-    <div class="status-bar">
-      SYS.READY <span class="blink">_</span> &nbsp; // AWAITING SERIAL HANDSHAKE
+    {% if boards_connected > 0 %}
+    <div class="status-bar" style="color:#0f0;">
+      {{ boards_connected }} BOARD{{ 'S' if boards_connected > 1 else '' }} CONNECTED <span class="blink">_</span>
+      &nbsp;<button onclick="window.location='/map'" style="display:inline;width:auto;padding:10px 20px;font-size:clamp(13px,1.4vw,16px);letter-spacing:2px;">LAUNCH MAP</button>
     </div>
+    {% else %}
+    <div class="status-bar">
+      SYS.READY <span class="blink">_</span> &nbsp; // SELECT AT LEAST ONE BOARD
+    </div>
+    {% endif %}
   </div>
   <script>
     for (var i = 0; i < 40; i++) {
@@ -216,9 +235,20 @@ HTML = """
     position:absolute;bottom:12px;left:50%;transform:translateX(-50%);
     background:rgba(6,8,16,0.92);
     padding:8px 16px;border:1px solid rgba(125,249,255,0.1);border-radius:6px;
-    font-family:'JetBrains Mono',monospace;font-size:13px;z-index:1000;
-    box-shadow:0 4px 20px rgba(0,0,0,0.5);backdrop-filter:blur(8px);white-space:nowrap;
+    font-family:'JetBrains Mono',monospace;font-size:12px;z-index:1000;
+    box-shadow:0 4px 20px rgba(0,0,0,0.5);backdrop-filter:blur(8px);
+    display:flex;gap:14px;align-items:center;
   }
+  .board-pill{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:4px;border:1px solid rgba(125,249,255,0.12);background:rgba(0,0,0,0.3);}
+  .board-pill .dot{width:6px;height:6px;border-radius:50%;display:inline-block;}
+  .board-pill .dot.on{background:lime;box-shadow:0 0 6px lime;}
+  .board-pill .dot.off{background:#ff3333;box-shadow:0 0 6px #ff3333;}
+  .board-row{display:flex;align-items:center;gap:8px;padding:6px 10px;margin-bottom:4px;border:1px solid rgba(125,249,255,0.08);border-radius:5px;background:rgba(0,0,0,0.25);}
+  .board-row .b-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;}
+  .board-row .b-dot.on{background:lime;box-shadow:0 0 8px lime;}
+  .board-row .b-dot.off{background:#ff3333;box-shadow:0 0 8px #ff3333;}
+  .board-row .b-label{font-size:13px;font-weight:600;letter-spacing:1px;min-width:48px;}
+  .board-row .b-port{font-size:11px;color:rgba(255,255,255,0.35);flex:1;text-align:right;}
 
   /* ── form elements ── */
   .field-label{
@@ -442,6 +472,19 @@ HTML = """
   <div class="panel-title">Mission Control</div>
   <div class="panel-body">
 
+    <div class="section-title" style="margin-top:0;">Connected Boards</div>
+    <div id="boardRoster" style="margin-bottom:6px;"></div>
+    <div id="addBoardRow" style="display:none;margin-bottom:6px;">
+      <div style="display:flex;gap:4px;align-items:center;">
+        <select id="addBoardPort" style="flex:1;padding:6px 8px;font-size:11px;background:rgba(0,0,0,0.4);color:#c0ffc0;border:1px solid rgba(125,249,255,0.15);font-family:inherit;"></select>
+        <select id="addBoardLabel" style="width:68px;padding:6px 4px;font-size:11px;background:rgba(0,0,0,0.4);color:#7DF9FF;border:1px solid rgba(125,249,255,0.15);font-family:inherit;">
+          <option value="S3">S3</option><option value="C5">C5</option>
+        </select>
+        <button onclick="doAddBoard()" style="padding:6px 10px;font-size:10px;background:transparent;color:lime;border:1px solid rgba(0,255,0,0.3);cursor:pointer;font-family:inherit;">ADD</button>
+      </div>
+    </div>
+    <button id="addBoardBtn" onclick="showAddBoard()" style="width:100%;padding:6px 10px;font-size:11px;letter-spacing:2px;background:transparent;color:rgba(125,249,255,0.4);border:1px solid rgba(125,249,255,0.15);cursor:pointer;font-family:inherit;text-transform:uppercase;">+ Add Board</button>
+
     <span class="field-label">Remote ID</span>
     <input class="field-input" id="basicId" placeholder="Drone identifier"/>
 
@@ -498,7 +541,7 @@ HTML = """
 
     <div class="ctrl-row" style="margin-top:4px;">
       <span class="cr-label">Count</span>
-      <input class="field-input" type="number" id="swarmCount" min="2" max="20" value="5" onchange="rebuildSwarmList()" style="width:60px;padding:6px 8px;text-align:center;font-size:13px;">
+      <input class="field-input" type="number" id="swarmCount" min="2" max="20" value="5" oninput="rebuildSwarmList()" style="width:60px;padding:6px 8px;text-align:center;font-size:13px;">
       <button onclick="rebuildSwarmList()" style="width:auto!important;padding:5px 12px!important;font-size:9px;border:1px solid rgba(125,249,255,0.2)!important;color:rgba(125,249,255,0.5)!important;margin:0;">APPLY</button>
     </div>
 
@@ -634,7 +677,14 @@ function getTxInterval(){
 var swarmDrones=[],swarmTxIndex=0,swarmMarkers=[],swarmPolylines=[],swarmAnimFrame=null,swarmInitialized=false;
 var SWARM_COLORS=['#FF00FF','#00FFFF','#FFFF00','#FF6600','#66FF00','#FF0066','#6600FF','#00FF66','#FF3399','#33FFCC','#CC33FF','#FFCC33','#3399FF','#FF9933','#33FF99','#9933FF','#FF3333','#33FF33','#3333FF','#FF33FF'];
 
-function onSwarmToggle(){if(isOn('swarmEnabled')&&!swarmInitialized){rebuildSwarmList();swarmInitialized=true;}}
+function onSwarmToggle(){
+  if(isOn('swarmEnabled')&&!swarmInitialized){rebuildSwarmList();swarmInitialized=true;}
+  if(isOn('swarmEnabled')&&missionState==='playing'&&path.length>=2){
+    buildSwarmPaths();stopSwarmAnimation();animateSwarmDrones();
+  }
+  if(!isOn('swarmEnabled')){stopSwarmAnimation();clearSwarmMarkers();clearSwarmPolylines();}
+}
+function getLiveSpeed(){return(parseFloat(document.getElementById('speed').value)||25)*0.44704;}
 
 document.getElementById('swarmPathMode').addEventListener('change',function(){
   var m=this.value,d=document.getElementById('pathModeDesc'),r=document.getElementById('randomPathSettings');
@@ -661,18 +711,32 @@ function rebuildSwarmList(){
   var altSpreadM=parseFloat(document.getElementById('swarmAltSpread').value)||20;
   var speedPct=(parseFloat(document.getElementById('swarmSpeedSpread').value)||20)/100;
   var formation=document.getElementById('swarmFormation').value;
-  var oldIds={};
-  swarmDrones.forEach(function(d){oldIds[d.idx]=d.id;});
-  swarmDrones=[];
+  var oldDrones={};
+  swarmDrones.forEach(function(d){oldDrones[d.idx]=d;});
+  var newDrones=[];
   for(var i=0;i<count;i++){
+    var old=oldDrones[i];
     var id;
-    if(idMode==='random')id=oldIds[i]!==undefined?oldIds[i]:generateRandomDroneId();
+    if(idMode==='random')id=old?old.id:generateRandomDroneId();
     else if(idMode==='prefix')id=prefix+String(i+1).padStart(2,'0');
-    else id=oldIds[i]||('DRONE-'+String(i+1).padStart(2,'0'));
+    else id=old?old.id:('DRONE-'+String(i+1).padStart(2,'0'));
     var off=getFormationOffset(i,count,spreadM,formation);
-    swarmDrones.push({idx:i,id:id,offsetLat:off.lat,offsetLng:off.lng,altOffset:(Math.random()-0.5)*2*altSpreadM,speedMult:1.0+(Math.random()-0.5)*2*speedPct,noiseSeed:Math.random()*10000,active:false,flightPath:null,simIndex:0,segmentOffset:0,currentLat:0,currentLng:0});
+    newDrones.push({idx:i,id:id,offsetLat:off.lat,offsetLng:off.lng,
+      altOffset:old?old.altOffset:(Math.random()-0.5)*2*altSpreadM,
+      speedMult:old?old.speedMult:1.0+(Math.random()-0.5)*2*speedPct,
+      noiseSeed:old?old.noiseSeed:Math.random()*10000,
+      active:old?old.active:false,
+      flightPath:old?old.flightPath:null,
+      simIndex:old?old.simIndex:0,
+      segmentOffset:old?old.segmentOffset:0,
+      currentLat:old?old.currentLat:0,
+      currentLng:old?old.currentLng:0});
   }
+  swarmDrones=newDrones;
   renderSwarmList();
+  if(missionState==='playing'&&isOn('swarmEnabled')&&swarmDrones.length>0){
+    buildSwarmPaths();stopSwarmAnimation();animateSwarmDrones();
+  }
 }
 
 function getFormationOffset(idx,total,spreadM,formation){
@@ -724,16 +788,29 @@ function buildSwarmPaths(){
   });
 }
 
-function animateSwarmDrones(baseSpeed){
+function getLiveFormationOffset(idx){
+  var count=swarmDrones.length;
+  var spreadM=parseFloat(document.getElementById('swarmSpread').value)||100;
+  var formation=document.getElementById('swarmFormation').value;
+  return getFormationOffset(idx,count,spreadM,formation);
+}
+
+function animateSwarmDrones(){
   if(missionState!=='playing')return;
+  var liveSpeed=getLiveSpeed();
   var mode=document.getElementById('swarmPathMode').value;
   swarmDrones.forEach(function(d){
     if(mode==='formation'){
-      if(droneMarker){var dl=droneMarker.getLatLng();d.currentLat=dl.lat+d.offsetLat;d.currentLng=dl.lng+d.offsetLng;}
+      if(droneMarker){
+        var dl=droneMarker.getLatLng();
+        var off=getLiveFormationOffset(d.idx);
+        d.offsetLat=off.lat;d.offsetLng=off.lng;
+        d.currentLat=dl.lat+off.lat;d.currentLng=dl.lng+off.lng;
+      }
     }else if(d.flightPath&&d.flightPath.length>1){
       var fp=d.flightPath,from=fp[d.simIndex],to=fp[(d.simIndex+1)%fp.length];
       var dx=to[0]-from[0],dy=to[1]-from[1],distM=Math.sqrt(dx*dx+dy*dy)*111111;
-      var advance=(baseSpeed*d.speedMult*0.016)/Math.max(distM,0.1);
+      var advance=(liveSpeed*d.speedMult*0.016)/Math.max(distM,0.1);
       d.segmentOffset+=advance;
       if(d.segmentOffset>=1){d.segmentOffset=0;d.simIndex=(d.simIndex+1)%fp.length;from=fp[d.simIndex];to=fp[(d.simIndex+1)%fp.length];}
       var t=d.segmentOffset;
@@ -742,7 +819,7 @@ function animateSwarmDrones(baseSpeed){
     }
   });
   updateSwarmMarkers();
-  swarmAnimFrame=requestAnimationFrame(function(){animateSwarmDrones(baseSpeed);});
+  swarmAnimFrame=requestAnimationFrame(animateSwarmDrones);
 }
 
 function stopSwarmAnimation(){if(swarmAnimFrame){cancelAnimationFrame(swarmAnimFrame);swarmAnimFrame=null;}}
@@ -785,6 +862,53 @@ function clearSwarmPolylines(){swarmPolylines.forEach(function(p){map.removeLaye
 
 rebuildSwarmList();
 
+// ── live-update hooks: sliders/toggles instantly affect active flight ──
+
+['swarmSpread','swarmFormation','swarmAltSpread','swarmSpeedSpread'].forEach(function(id){
+  document.getElementById(id).addEventListener('input',function(){
+    if(missionState!=='idle'&&isOn('swarmEnabled')&&swarmDrones.length>0){
+      var spreadM=parseFloat(document.getElementById('swarmSpread').value)||100;
+      var formation=document.getElementById('swarmFormation').value;
+      swarmDrones.forEach(function(d){
+        var off=getFormationOffset(d.idx,swarmDrones.length,spreadM,formation);
+        d.offsetLat=off.lat;d.offsetLng=off.lng;
+      });
+    }
+  });
+});
+
+document.getElementById('swarmFormation').addEventListener('change',function(){
+  if(missionState!=='idle'&&isOn('swarmEnabled')&&swarmDrones.length>0){
+    var spreadM=parseFloat(document.getElementById('swarmSpread').value)||100;
+    var formation=this.value;
+    swarmDrones.forEach(function(d){
+      var off=getFormationOffset(d.idx,swarmDrones.length,spreadM,formation);
+      d.offsetLat=off.lat;d.offsetLng=off.lng;
+    });
+    var mode=document.getElementById('swarmPathMode').value;
+    if(mode==='offset'){buildSwarmPaths();stopSwarmAnimation();animateSwarmDrones();}
+  }
+});
+
+document.getElementById('swarmPathMode').addEventListener('change',function(){
+  if(missionState==='playing'&&isOn('swarmEnabled')&&swarmDrones.length>0&&path.length>=2){
+    buildSwarmPaths();stopSwarmAnimation();animateSwarmDrones();
+  }
+});
+
+// force immediate telemetry refresh on any variation slider move
+['altVarRange','gpsVarRange','speedVarRange','headVarRange','txJitterRange','alt','speed'].forEach(function(id){
+  var el=document.getElementById(id);
+  if(el)el.addEventListener('input',function(){
+    if(missionState!=='idle'&&droneMarker&&pilotMarker){
+      var d=droneMarker.getLatLng(),p=pilotMarker.getLatLng();
+      var baseAlt=parseInt(document.getElementById('alt').value)||0;
+      var v=applyVariations(d.lat,d.lng,baseAlt);
+      updateTelemetry({basic_id:document.getElementById('basicId').value,drone_altitude:Math.round(v.alt),drone_lat:v.lat,drone_long:v.lng,pilot_lat:p.lat,pilot_long:p.lng});
+    }
+  });
+});
+
 // ── map interaction ──
 
 document.getElementById('setPilot').onclick=function(){flash('setPilot');pilotSetMode=true;document.getElementById('setPilot').style.backgroundColor='#FF00FF';};
@@ -811,7 +935,7 @@ function createIcon(label){
 
 // ── state machine: idle | playing | paused ──
 
-var missionState='idle',missionBaseSpeed=0,txTimerId=null,txRunning=false;
+var missionState='idle',txTimerId=null,txRunning=false;
 
 function killTxLoop(){txRunning=false;if(txTimerId){clearTimeout(txTimerId);txTimerId=null;}}
 
@@ -919,19 +1043,19 @@ function toggleHw(type,muted){
 
 // ── movement animation ──
 
-function moveSegment(idx,offset,speedMps){
+function moveSegment(idx,offset){
   if(missionState!=='playing')return;
   simIndex=idx;
   var from=path[idx],to=path[(idx+1)%path.length];
   var dist=map.distance(L.latLng(from),L.latLng(to));
-  if(dist<0.01){segmentOffset=0;moveSegment((idx+1)%path.length,0,speedMps);return;}
-  var speed=speedMps*getSpeedMultiplier();
-  var duration=(dist/speed)*1000;
+  if(dist<0.01){segmentOffset=0;moveSegment((idx+1)%path.length,0);return;}
   var startTime=performance.now();
   (function step(){
     if(missionState!=='playing')return;
+    var liveSpeed=getLiveSpeed()*getSpeedMultiplier();
+    var duration=(dist/liveSpeed)*1000;
     var t=offset+(performance.now()-startTime)/duration;
-    if(t>=1){segmentOffset=0;moveSegment((idx+1)%path.length,0,speedMps);}
+    if(t>=1){segmentOffset=0;moveSegment((idx+1)%path.length,0);}
     else{
       var lat=from[0]+(to[0]-from[0])*t,lng=from[1]+(to[1]-from[1])*t;
       var hd=getHeadingDrift();
@@ -960,8 +1084,8 @@ document.getElementById('play').onclick=function(){
     missionState='playing';playing=true;
     setStatusCircle('#00cc00');
     updateTicker('playing');
-    moveSegment(simIndex,segmentOffset,missionBaseSpeed);
-    if(isOn('swarmEnabled')&&swarmDrones.length>0){stopSwarmAnimation();animateSwarmDrones(missionBaseSpeed);}
+    moveSegment(simIndex,segmentOffset);
+    if(isOn('swarmEnabled')&&swarmDrones.length>0){stopSwarmAnimation();animateSwarmDrones();}
     return;
   }
   if(!pilotMarker)return alert('Set pilot location first.');
@@ -979,10 +1103,8 @@ document.getElementById('play').onclick=function(){
   if(lastHighlight)map.removeLayer(lastHighlight);
   lastHighlight=L.circle(path[path.length-1],{radius:12,color:'#7DF9FF',fill:false,weight:2}).addTo(map);
   if(path.length>1){if(loopLine)map.removeLayer(loopLine);loopLine=L.polyline([path[path.length-1],path[0]],{color:'rgba(125,249,255,0.3)',weight:1,dashArray:'6,8'}).addTo(map);}
-  var mph=parseFloat(document.getElementById('speed').value)||25;
-  missionBaseSpeed=mph*0.44704;
-  moveSegment(simIndex,segmentOffset,missionBaseSpeed);
-  if(swarmOn){stopSwarmAnimation();animateSwarmDrones(missionBaseSpeed);}
+  moveSegment(simIndex,segmentOffset);
+  if(swarmOn){stopSwarmAnimation();animateSwarmDrones();}
   startTxLoop();
   updateTicker('playing');
 };
@@ -1018,11 +1140,65 @@ document.getElementById('stop').onclick=function(){
 
 // ── serial status polling ──
 
+var connectedBoardCount=0;
 function updateSerialStatus(){
   fetch('/api/serial_status').then(function(r){return r.json();}).then(function(s){
-    document.getElementById('serialStatus').innerHTML='Port:'+(s.port||'none')+' - '+(s.connected?'<span style="color:lime">Connected</span>':'<span style="color:red">Disconnected</span>');
+    var el=document.getElementById('serialStatus');
+    var roster=document.getElementById('boardRoster');
+    var addBtn=document.getElementById('addBoardBtn');
+    if(!s.boards||s.boards.length===0){
+      el.innerHTML='<span style="color:red;">NO BOARDS</span>';
+      if(roster)roster.innerHTML='<div style="font-size:12px;color:rgba(255,255,255,0.2);">No boards connected</div>';
+      connectedBoardCount=0;
+      if(addBtn)addBtn.style.display='block';
+      return;
+    }
+    connectedBoardCount=s.boards.length;
+    if(addBtn)addBtn.style.display=s.boards.length>=3?'none':'block';
+    var barHtml='',rosterHtml='';
+    s.boards.forEach(function(b,i){
+      var dot=b.connected?'on':'off';
+      var col=b.label==='C5'?'#7DF9FF':'#FF00FF';
+      var portShort=b.port.split('/').pop();
+      barHtml+='<span class="board-pill"><span class="dot '+dot+'"></span><span style="color:'+col+';">'+b.label+'</span><span style="color:rgba(255,255,255,0.35);font-size:10px;">'+portShort+'</span></span>';
+      rosterHtml+='<div class="board-row"><span class="b-dot '+dot+'"></span><span class="b-label" style="color:'+col+';">'+b.label+'</span><span class="b-port">'+portShort+'</span><button onclick="removeBoard(\''+b.port.replace(/'/g,"\\'")+'\')" style="padding:2px 6px;font-size:9px;background:transparent;color:#ff3333;border:1px solid rgba(255,51,51,0.3);cursor:pointer;font-family:inherit;margin-left:4px;">X</button></div>';
+    });
+    el.innerHTML=barHtml;
+    if(roster)roster.innerHTML=rosterHtml;
   }).catch(function(){});
 }
+
+function showAddBoard(){
+  var row=document.getElementById('addBoardRow');
+  if(row.style.display==='none'){
+    fetch('/api/ports').then(function(r){return r.json();}).then(function(d){
+      var sel=document.getElementById('addBoardPort');
+      sel.innerHTML='<option value="">[ SELECT ]</option>';
+      d.ports.forEach(function(p){
+        if(d.used.indexOf(p)===-1)sel.innerHTML+='<option value="'+p+'">'+p+'</option>';
+      });
+      row.style.display='block';
+    });
+  }else{row.style.display='none';}
+}
+
+function doAddBoard(){
+  var port=document.getElementById('addBoardPort').value;
+  var label=document.getElementById('addBoardLabel').value;
+  if(!port)return;
+  fetch('/api/add_board',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({port:port,label:label})}).then(function(r){return r.json();}).then(function(d){
+    document.getElementById('addBoardRow').style.display='none';
+    updateSerialStatus();
+  }).catch(console.error);
+}
+
+function removeBoard(port){
+  if(!confirm('Remove board '+port+'?'))return;
+  fetch('/api/remove_board',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({port:port})}).then(function(r){return r.json();}).then(function(d){
+    updateSerialStatus();
+  }).catch(console.error);
+}
+
 setInterval(updateSerialStatus,2000);
 updateSerialStatus();
 
@@ -1049,56 +1225,85 @@ document.getElementById('clearPaths').onclick=function(){
 
 @app.route('/', methods=['GET', 'POST'])
 def index():
-    global selected_port, ser, current_port
+    global boards
     ports = [p.device for p in list_ports.comports()]
     if request.method == 'POST':
-        selected_port = request.form['serial_port']
-        current_port = selected_port
-        try:
-            if ser and ser.is_open: ser.close()
-        except Exception:
-            pass
-        try:
-            ser = serial.Serial(current_port, BAUD_RATE, timeout=1)
-        except Exception:
-            ser = None
-        return redirect(url_for('map_view'))
-    return render_template_string(PORT_SELECT_HTML, ports=ports, ascii_art=ASCII_ART)
+        # close existing connections
+        for b in boards:
+            try:
+                if b['ser'] and b['ser'].is_open:
+                    b['ser'].close()
+            except Exception:
+                pass
+        new_boards = []
+        for i in range(MAX_BOARDS):
+            port = request.form.get(f'port_{i}', '').strip()
+            label = request.form.get(f'label_{i}', 'S3').strip()
+            if not port:
+                continue
+            # skip duplicate ports
+            if any(b['port'] == port for b in new_boards):
+                continue
+            s = None
+            try:
+                s = serial.Serial(port, BAUD_RATE, timeout=1)
+            except Exception:
+                s = None
+            new_boards.append({'port': port, 'ser': s, 'lock': threading.Lock(), 'label': label})
+        boards = new_boards
+        if len(boards) > 0:
+            return redirect(url_for('map_view'))
+    active_ports = [boards[i]['port'] if i < len(boards) else '' for i in range(MAX_BOARDS)]
+    active_labels = [boards[i]['label'] if i < len(boards) else 'S3' for i in range(MAX_BOARDS)]
+    bc = sum(1 for b in boards if b['ser'] and b['ser'].is_open)
+    return render_template_string(PORT_SELECT_HTML, ports=ports, ascii_art=ASCII_ART,
+                                  active_ports=active_ports, active_labels=active_labels,
+                                  boards_connected=bc)
 
 @app.route('/map')
 def map_view():
-    if not selected_port:
+    if len(boards) == 0:
         return redirect(url_for('index'))
     return render_template_string(HTML)
 
-def safe_serial_write(data_str):
-    global ser, selected_port
-    with ser_lock:
-        if ser is None or not ser.is_open:
+def _write_one(board, data_str):
+    """Write to a single board with reconnect logic."""
+    with board['lock']:
+        if board['ser'] is None or not board['ser'].is_open:
             try:
-                ser = serial.Serial(selected_port, BAUD_RATE, timeout=1) if selected_port else None
+                board['ser'] = serial.Serial(board['port'], BAUD_RATE, timeout=1)
             except Exception:
-                ser = None
+                board['ser'] = None
                 return False
-        if not ser:
-            return False
         try:
-            ser.write((data_str + "\n").encode('ascii'))
-            ser.flush()
+            board['ser'].write((data_str + "\n").encode('ascii'))
+            board['ser'].flush()
             return True
         except Exception:
             try:
-                ser.close()
+                board['ser'].close()
             except Exception:
                 pass
             try:
-                ser = serial.Serial(selected_port, BAUD_RATE, timeout=1)
-                ser.write((data_str + "\n").encode('ascii'))
-                ser.flush()
+                board['ser'] = serial.Serial(board['port'], BAUD_RATE, timeout=1)
+                board['ser'].write((data_str + "\n").encode('ascii'))
+                board['ser'].flush()
                 return True
             except Exception:
-                ser = None
+                board['ser'] = None
                 return False
+
+def safe_serial_write(data_str, board_index=None):
+    """Write to one board (by index) or all boards (None)."""
+    if board_index is not None:
+        if board_index < len(boards):
+            return _write_one(boards[board_index], data_str)
+        return False
+    ok = False
+    for b in boards:
+        if _write_one(b, data_str):
+            ok = True
+    return ok
 
 @app.route('/api/start', methods=['POST'])
 def start():
@@ -1157,23 +1362,74 @@ def led_toggle():
 
 @app.route('/api/serial_status', methods=['GET'])
 def serial_status():
-    global ser, selected_port
     available = [p.device for p in list_ports.comports()]
-    if selected_port not in available:
-        with ser_lock:
+    board_list = []
+    for b in boards:
+        if b['port'] not in available:
+            with b['lock']:
+                try:
+                    if b['ser'] and b['ser'].is_open:
+                        b['ser'].close()
+                except Exception:
+                    pass
+                b['ser'] = None
+        else:
+            with b['lock']:
+                if b['ser'] is None or not b['ser'].is_open:
+                    try:
+                        b['ser'] = serial.Serial(b['port'], BAUD_RATE, timeout=1)
+                    except Exception:
+                        b['ser'] = None
+        board_list.append({
+            "port": b['port'],
+            "label": b['label'],
+            "connected": bool(b['ser'] and b['ser'].is_open)
+        })
+    return jsonify({"boards": board_list, "count": len(boards)})
+
+@app.route('/api/ports', methods=['GET'])
+def list_ports_api():
+    available = [p.device for p in list_ports.comports()]
+    used = [b['port'] for b in boards]
+    return jsonify({"ports": available, "used": used})
+
+@app.route('/api/add_board', methods=['POST'])
+def add_board():
+    global boards
+    if len(boards) >= MAX_BOARDS:
+        return jsonify(status='error', msg='max 3 boards'), 400
+    data = request.get_json()
+    port = data.get('port', '').strip() if data else ''
+    label = data.get('label', 'S3').strip() if data else 'S3'
+    if not port:
+        return jsonify(status='error', msg='no port'), 400
+    if any(b['port'] == port for b in boards):
+        return jsonify(status='error', msg='port already in use'), 400
+    s = None
+    try:
+        s = serial.Serial(port, BAUD_RATE, timeout=1)
+    except Exception:
+        s = None
+    boards.append({'port': port, 'ser': s, 'lock': threading.Lock(), 'label': label})
+    return jsonify(status='ok', connected=bool(s and s.is_open))
+
+@app.route('/api/remove_board', methods=['POST'])
+def remove_board():
+    global boards
+    data = request.get_json()
+    port = data.get('port', '').strip() if data else ''
+    new_boards = []
+    for b in boards:
+        if b['port'] == port:
             try:
-                if ser and ser.is_open: ser.close()
+                if b['ser'] and b['ser'].is_open:
+                    b['ser'].close()
             except Exception:
                 pass
-            ser = None
-        return jsonify({"port": selected_port, "connected": False})
-    with ser_lock:
-        if ser is None or not ser.is_open:
-            try:
-                ser = serial.Serial(selected_port, BAUD_RATE, timeout=1)
-            except Exception:
-                ser = None
-    return jsonify({"port": selected_port, "connected": bool(ser and ser.is_open)})
+        else:
+            new_boards.append(b)
+    boards = new_boards
+    return jsonify(status='ok', count=len(boards))
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
