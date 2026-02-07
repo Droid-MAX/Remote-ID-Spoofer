@@ -1,329 +1,363 @@
+#include <Arduino.h>
+#include <ArduinoJson.h>
 #include <esp_wifi.h>
 #include <esp_wifi_types.h>
-#include "esp_netif.h"
-#include "esp_event.h"
+#include <esp_event.h>
+#include <esp_netif.h>
+#include <esp_system.h>
+#include <cstring>
 #include "opendroneid.h"
 #include "odid_wifi.h"
-#include <cstring>  // for memset
-#include <ArduinoJson.h>
-#include <Arduino.h>  // for millis() and Serial
-#include "esp_system.h"  // for esp_random()
-#include "esp_wifi.h"
-#include "esp_wifi_types.h"
 
-// Fallback SSID when no RID is available
-static const char* BEACON_SSID     = "Starbucks WiFI";
-static const size_t BEACON_SSID_LEN = 14;
-static const uint8_t AP_CHANNEL = 6;  // match the channel set in setup()
+#define BUZZER_PIN 3
+#define LED_PIN    21
+#define LED_ON     LOW
+#define LED_OFF    HIGH
 
-// === User‑configurable spoof MAC ===
-// To override the random MAC, set CONFIG_SPOOF_MAC to a 17‑char "XX:XX:XX:XX:XX:XX" string.
-static const char* CONFIG_SPOOF_MAC = "60:60:1f:d3:B2:6a"; 
+static const char*   BEACON_SSID     = "Starbucks WiFI";
+static const size_t  BEACON_SSID_LEN = 14;
+static const uint8_t AP_CHANNEL      = 6;
+static const char*   CONFIG_SPOOF_MAC = "60:60:1f:d3:B2:6a";
 
-// Last-received Remote ID data
-static char    g_basic_id[ODID_ID_SIZE+1] = "";
-static double  g_drone_lat = 0.0, g_drone_lon = 0.0;
-static int     g_drone_alt = 0;
-static double  g_pilot_lat = 0.0, g_pilot_lon = 0.0;
-static bool    g_has_data  = false;
-static bool    broadcastEnabled = true;
+static char    g_basic_id[ODID_ID_SIZE + 1] = "";
+static double  g_drone_lat  = 0.0;
+static double  g_drone_lon  = 0.0;
+static int     g_drone_alt  = 0;
+static double  g_pilot_lat  = 0.0;
+static double  g_pilot_lon  = 0.0;
+static bool    g_has_data   = false;
+static bool    broadcastEnabled = false;
 
-// Dynamic override for source MAC from JSON
 static bool    g_dynamic_override = false;
 static uint8_t g_override_src_mac[6] = {0};
-
-// Optional override for the source MAC in the beacon frame:
-// Set USE_OVERRIDE_MAC to true and OVERRIDE_SRC_MAC to your desired MAC bytes.
-static const bool USE_OVERRIDE_MAC = false;
-static const uint8_t OVERRIDE_SRC_MAC[6] = { 0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC };
-
-static const uint16_t BEACON_INTERVAL = 100;
-// sequence counter for cycling ODID message types
 static uint8_t g_send_counter = 0;
 
+static bool    buzzerMuted = false;
+static bool    ledMuted    = false;
 
-// Build and inject binary ODID messages as a Vendor IE
-static void inject_vendor_ie(const char *basic_id,
-                             double drone_lat, double drone_lon,
-                             int drone_alt,
-                             double pilot_lat, double pilot_lon) {
-    // Initialize UAS data struct
+static const uint16_t TX_INTERVAL_MS = 1000;
+
+// ── buzzer ──
+
+static void beep(int freq, int ms) {
+    if (buzzerMuted) return;
+    tone(BUZZER_PIN, freq, ms);
+    delay(ms);
+    noTone(BUZZER_PIN);
+}
+
+static void playCloseEncounters() {
+    if (buzzerMuted) return;
+    int notes[]    = {587, 659, 523, 262, 392};
+    int durations[] = {300, 300, 300, 600, 600};
+    for (int i = 0; i < 5; i++) {
+        tone(BUZZER_PIN, notes[i], durations[i]);
+        delay(durations[i] + 50);
+        noTone(BUZZER_PIN);
+    }
+}
+
+static void startBeep() {
+    beep(1200, 60); delay(40);
+    beep(1600, 60); delay(40);
+    beep(2200, 80);
+}
+
+static void stopBeep() {
+    beep(2000, 60); delay(40);
+    beep(1400, 60); delay(40);
+    beep(800, 100);
+}
+
+static void heartbeatTick() {
+    if (buzzerMuted) return;
+    tone(BUZZER_PIN, 2400, 15);
+    delay(15);
+    noTone(BUZZER_PIN);
+}
+
+// ── LED ──
+
+static void ledOn()  { if (!ledMuted) digitalWrite(LED_PIN, LED_ON); }
+static void ledOff() { digitalWrite(LED_PIN, LED_OFF); }
+
+static void ledFlash(int ms) {
+    if (ledMuted) return;
+    ledOn(); delay(ms); ledOff();
+}
+
+// ── ODID data builder ──
+
+static void fill_uas_data(ODID_UAS_Data *uas, const char *basic_id,
+                          double lat, double lon, int alt,
+                          double pilot_lat, double pilot_lon) {
+    memset(uas, 0, sizeof(*uas));
+
+    odid_initBasicIDData(&uas->BasicID[0]);
+    uas->BasicID[0].UAType = ODID_UATYPE_OTHER;
+    uas->BasicID[0].IDType = ODID_IDTYPE_SERIAL_NUMBER;
+    strncpy(uas->BasicID[0].UASID, basic_id, ODID_ID_SIZE);
+    uas->BasicID[0].UASID[ODID_ID_SIZE] = '\0';
+    uas->BasicIDValid[0] = 1;
+
+    odid_initLocationData(&uas->Location);
+    uas->Location.Status        = ODID_STATUS_AIRBORNE;
+    uas->Location.Latitude      = lat;
+    uas->Location.Longitude     = lon;
+    uas->Location.AltitudeGeo   = alt;
+    uas->Location.AltitudeBaro  = alt;
+    uas->Location.Height        = (float)alt;
+    uas->Location.HeightType    = ODID_HEIGHT_REF_OVER_TAKEOFF;
+    uas->Location.HorizAccuracy = ODID_HOR_ACC_10_METER;
+    uas->Location.VertAccuracy  = ODID_VER_ACC_10_METER;
+    uas->Location.SpeedAccuracy = ODID_SPEED_ACC_1_METERS_PER_SECOND;
+    uas->Location.TSAccuracy    = ODID_TIME_ACC_1_0_SECOND;
+    uas->LocationValid          = 1;
+
+    odid_initSystemData(&uas->System);
+    uas->System.OperatorLocationType = ODID_OPERATOR_LOCATION_TYPE_LIVE_GNSS;
+    uas->System.OperatorLatitude     = pilot_lat;
+    uas->System.OperatorLongitude    = pilot_lon;
+    uas->SystemValid                 = 1;
+}
+
+static void update_beacon_vendor_ie(ODID_UAS_Data *uas) {
+    uint8_t pack_buf[256];
+    int pack_len = odid_message_build_pack(uas, pack_buf, sizeof(pack_buf));
+    if (pack_len <= 0) return;
+
+    size_t vie_len = 7 + pack_len;
+    uint8_t vie_buf[300];
+    if (vie_len > sizeof(vie_buf)) return;
+
+    vie_buf[0] = 0xDD;
+    vie_buf[1] = (uint8_t)(4 + 1 + pack_len);
+    vie_buf[2] = 0xFA;
+    vie_buf[3] = 0x0B;
+    vie_buf[4] = 0xBC;
+    vie_buf[5] = 0x0D;
+    vie_buf[6] = g_send_counter;
+    memcpy(&vie_buf[7], pack_buf, pack_len);
+
+    esp_wifi_set_vendor_ie(true, WIFI_VND_IE_TYPE_BEACON, WIFI_VND_IE_ID_0, vie_buf);
+    esp_wifi_set_vendor_ie(true, WIFI_VND_IE_TYPE_PROBE_RESP, WIFI_VND_IE_ID_0, vie_buf);
+}
+
+static void inject_odid(const char *basic_id,
+                        double lat, double lon, int alt,
+                        double pilot_lat, double pilot_lon) {
+    if (basic_id[0] == '\0') return;
+
     ODID_UAS_Data uas;
-    memset(&uas, 0, sizeof(uas));
+    fill_uas_data(&uas, basic_id, lat, lon, alt, pilot_lat, pilot_lon);
 
-    // Populate BasicID
-    odid_initBasicIDData(&uas.BasicID[0]);
-    uas.BasicID[0].UAType = ODID_UATYPE_OTHER;
-    uas.BasicID[0].IDType = ODID_IDTYPE_SERIAL_NUMBER;
-    strncpy(uas.BasicID[0].UASID, basic_id, ODID_ID_SIZE);
-    uas.BasicID[0].UASID[ODID_ID_SIZE] = '\0';
-    uas.BasicIDValid[0] = 1;
-
-    // Populate Location
-    odid_initLocationData(&uas.Location);
-    uas.Location.Latitude    = drone_lat;
-    uas.Location.Longitude   = drone_lon;
-    uas.Location.AltitudeGeo = drone_alt;
-    uas.LocationValid        = 1;
-
-    // Populate System (Operator)
-    odid_initSystemData(&uas.System);
-    uas.System.OperatorLocationType = ODID_OPERATOR_LOCATION_TYPE_LIVE_GNSS;
-    uas.System.OperatorLatitude     = pilot_lat;
-    uas.System.OperatorLongitude    = pilot_lon;
-    uas.SystemValid                 = 1;
-
-    // choose source MAC: dynamic override takes priority
     uint8_t ap_mac[6];
     esp_wifi_get_mac(WIFI_IF_AP, ap_mac);
     uint8_t *src_mac = g_dynamic_override ? g_override_src_mac : ap_mac;
 
-    // Build SSID for beacon IE: fallback to static until real RID arrives
-    char ssidBuf[ODID_ID_SIZE + 10];
-    if (basic_id[0] == '\0') {
-        memcpy(ssidBuf, BEACON_SSID, BEACON_SSID_LEN);
-        ssidBuf[BEACON_SSID_LEN] = '\0';
-    } else {
-        snprintf(ssidBuf, sizeof(ssidBuf), "RID-%s", basic_id);
-    }
-    size_t ssidLen = strlen(ssidBuf);
-
-    // Build a full beacon frame with dynamic SSID
     uint8_t frame_buf[512];
-    int frame_len = odid_wifi_build_message_pack_beacon_frame(
-        &uas,
-        (char*)src_mac,
-        ssidBuf,
-        ssidLen,
-        BEACON_INTERVAL,
-        g_send_counter,
-        frame_buf,
-        sizeof(frame_buf)
-    );
+    int frame_len;
+
+    update_beacon_vendor_ie(&uas);
+
+    frame_len = odid_wifi_build_nan_sync_beacon_frame(
+        (char *)src_mac, frame_buf, sizeof(frame_buf));
+    if (frame_len > 0)
+        esp_wifi_80211_tx(WIFI_IF_AP, frame_buf, frame_len, true);
+
+    frame_len = odid_wifi_build_message_pack_nan_action_frame(
+        &uas, (char *)src_mac, g_send_counter, frame_buf, sizeof(frame_buf));
     if (frame_len > 0) {
         esp_err_t err = esp_wifi_80211_tx(WIFI_IF_AP, frame_buf, frame_len, true);
-        // Serial.printf("Beacon tx err=%d, len=%d\n", err, frame_len);
-        // cycle to the next message type for the next beacon (wrap every 3)
-        g_send_counter = (g_send_counter + 1) % 3;
-    } else {
-        // Serial.printf("Beacon build failed: %d\n", frame_len);
+        if (err != ESP_OK)
+            Serial.printf("NAN tx err=%d\n", err);
     }
-    return;
+
+    g_send_counter = (g_send_counter + 1) % 3;
 }
+
+static void clear_vendor_ie() {
+    esp_wifi_set_vendor_ie(false, WIFI_VND_IE_TYPE_BEACON, WIFI_VND_IE_ID_0, NULL);
+    esp_wifi_set_vendor_ie(false, WIFI_VND_IE_TYPE_PROBE_RESP, WIFI_VND_IE_ID_0, NULL);
+}
+
+static void update_ap_ssid() {
+    wifi_config_t cfg = {};
+    char buf[ODID_ID_SIZE + 10];
+    size_t len;
+
+    if (g_basic_id[0] == '\0') {
+        memcpy(buf, BEACON_SSID, BEACON_SSID_LEN);
+        buf[BEACON_SSID_LEN] = '\0';
+        len = BEACON_SSID_LEN;
+    } else {
+        len = snprintf(buf, sizeof(buf), "RID-%s", g_basic_id);
+    }
+
+    memcpy(cfg.ap.ssid, buf, len);
+    cfg.ap.ssid_len       = (uint8_t)len;
+    cfg.ap.channel        = AP_CHANNEL;
+    cfg.ap.authmode       = WIFI_AUTH_OPEN;
+    cfg.ap.max_connection = 4;
+    esp_wifi_set_config(WIFI_IF_AP, &cfg);
+    esp_wifi_set_channel(AP_CHANNEL, WIFI_SECOND_CHAN_NONE);
+}
+
+static bool parse_mac(const char *str, uint8_t *out) {
+    if (!str || strlen(str) != 17) return false;
+    unsigned int b[6];
+    if (sscanf(str, "%02x:%02x:%02x:%02x:%02x:%02x",
+               &b[0], &b[1], &b[2], &b[3], &b[4], &b[5]) != 6)
+        return false;
+    for (int i = 0; i < 6; i++) out[i] = (uint8_t)b[i];
+    return true;
+}
+
+// ═══════════════════════════════════════════
 
 void setup() {
     Serial.begin(115200);
-    delay(1000);
-    // Serial.println("Starting AP with Vendor IE...");
-    // Determine default override MAC: config takes priority, else random 60:60:1f:XX:YY:ZZ
-    if (CONFIG_SPOOF_MAC && strlen(CONFIG_SPOOF_MAC) == 17) {
-        unsigned int b[6];
-        if (sscanf(CONFIG_SPOOF_MAC, "%02x:%02x:%02x:%02x:%02x:%02x",
-                   &b[0], &b[1], &b[2], &b[3], &b[4], &b[5]) == 6) {
-            for (int i = 0; i < 6; ++i) {
-                g_override_src_mac[i] = (uint8_t)b[i];
-            }
-            g_dynamic_override = true;
-            // Serial.printf("Using configured spoof MAC %s\n", CONFIG_SPOOF_MAC);
-        }
-    } else {
+
+    pinMode(BUZZER_PIN, OUTPUT);
+    digitalWrite(BUZZER_PIN, LOW);
+    pinMode(LED_PIN, OUTPUT);
+    ledOff();
+
+    delay(500);
+    playCloseEncounters();
+    ledFlash(200);
+
+    if (!parse_mac(CONFIG_SPOOF_MAC, g_override_src_mac)) {
         uint32_t rnd = esp_random();
         g_override_src_mac[0] = 0x60;
         g_override_src_mac[1] = 0x60;
         g_override_src_mac[2] = 0x1f;
-        g_override_src_mac[3] = (rnd      ) & 0xFF;
-        g_override_src_mac[4] = (rnd >>  8) & 0xFF;
+        g_override_src_mac[3] = (rnd)       & 0xFF;
+        g_override_src_mac[4] = (rnd >> 8)  & 0xFF;
         g_override_src_mac[5] = (rnd >> 16) & 0xFF;
-        g_dynamic_override   = true;
-        // Serial.printf("Using randomized spoof MAC %02x:%02x:%02x:%02x:%02x:%02x\n",
-        //     g_override_src_mac[0], g_override_src_mac[1], g_override_src_mac[2],
-        //     g_override_src_mac[3], g_override_src_mac[4], g_override_src_mac[5]);
     }
+    g_dynamic_override = true;
 
-    // Initialize TCP/IP network interface and default event loop
-    ESP_ERROR_CHECK( esp_netif_init() );
-    ESP_ERROR_CHECK( esp_event_loop_create_default() );
-    // Create default Wi-Fi AP network interface
+    ESP_ERROR_CHECK(esp_netif_init());
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
     esp_netif_create_default_wifi_ap();
-    // Initialize Wi-Fi driver
+
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-    ESP_ERROR_CHECK( esp_wifi_init(&cfg) );
-    ESP_ERROR_CHECK( esp_wifi_set_mode(WIFI_MODE_APSTA) );
-    // disable power-save for raw TX
-    ESP_ERROR_CHECK( esp_wifi_set_ps(WIFI_PS_NONE) );
-    // Configure AP settings
-    // Build fallback SSID: use static until we get a real RID
-    wifi_config_t ap_config = { 0 };
-    char ssidBuf[ODID_ID_SIZE + 10];
-    if (g_basic_id[0] == '\0') {
-        memcpy(ssidBuf, BEACON_SSID, BEACON_SSID_LEN);
-        ssidBuf[BEACON_SSID_LEN] = '\0';
-    } else {
-        snprintf(ssidBuf, sizeof(ssidBuf), "RID-%s", g_basic_id);
-    }
-    size_t ssidLen = strlen(ssidBuf);
-    memcpy(ap_config.ap.ssid, ssidBuf, ssidLen);
-    ap_config.ap.ssid_len = ssidLen;
-    ap_config.ap.channel = AP_CHANNEL;
-    ap_config.ap.authmode = WIFI_AUTH_OPEN;
-    ap_config.ap.max_connection = 4;
-    ESP_ERROR_CHECK( esp_wifi_set_config(WIFI_IF_AP, &ap_config) );
-    // Start Wi-Fi
-    ESP_ERROR_CHECK( esp_wifi_start() );
-    // Serial.println("ESP32 AP started on channel " + String(ap_config.ap.channel));
-    // Re-assert the channel for raw TX
-    ESP_ERROR_CHECK( esp_wifi_set_channel(AP_CHANNEL, WIFI_SECOND_CHAN_NONE) );
+    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
+    ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
+
+    update_ap_ssid();
+    ESP_ERROR_CHECK(esp_wifi_start());
+    ESP_ERROR_CHECK(esp_wifi_set_channel(AP_CHANNEL, WIFI_SECOND_CHAN_NONE));
+
+    beep(1000, 50);
+    ledFlash(100);
 }
 
 void loop() {
-    static char json_buf[512];
+    static char json_buf[1024];
     static size_t json_idx = 0;
     static unsigned long lastTx = 0;
-    // Transmit roughly once per BEACON_INTERVAL (TU ≈ ms)
-    const unsigned long TX_INTERVAL = BEACON_INTERVAL; // approx. 100 TU ≈ 100 ms
 
-    // 1) Read incoming JSON
     while (Serial.available()) {
         char c = Serial.read();
-        // Skip carriage returns
         if (c == '\r') continue;
-        if (c == '\n' || json_idx >= sizeof(json_buf)-1) {
+
+        if (c == '\n' || json_idx >= sizeof(json_buf) - 1) {
             json_buf[json_idx] = '\0';
             json_idx = 0;
-            // Ignore any lines that don’t look like JSON
-            if (json_buf[0] != '{') {
-                // not JSON, discard
+
+            if (json_buf[0] != '{') continue;
+
+            StaticJsonDocument<1024> doc;
+            if (deserializeJson(doc, json_buf) != DeserializationError::Ok)
                 continue;
+
+            if (doc.containsKey("path") && !doc.containsKey("drone_lat") && !doc.containsKey("action"))
+                continue;
+
+            // Mute controls
+            if (doc.containsKey("buzzer_mute")) {
+                buzzerMuted = doc["buzzer_mute"].as<bool>();
+                if (buzzerMuted) noTone(BUZZER_PIN);
             }
-            Serial.print("Parsing JSON: ");
-            Serial.println(json_buf);
-            StaticJsonDocument<512> doc;
-            DeserializationError err = deserializeJson(doc, json_buf);
-            if (!err) {
-                // Skip mission-start JSON that only defines the path but no coordinates (unless it carries an action)
-                if (doc.containsKey("path") && !doc.containsKey("drone_lat") && !doc.containsKey("action")) {
-                    // Serial.print("Skipping mission-start JSON: ");
-                    // Serial.println(json_buf);
-                    continue;
-                }
-                // Update globals
-                if (doc.containsKey("basic_id")) {
-                    const char* id = doc["basic_id"];
-                    strncpy(g_basic_id, id, ODID_ID_SIZE);
-                    g_basic_id[ODID_ID_SIZE] = '\0';
-                }
-                if (doc.containsKey("drone_lat") && doc.containsKey("drone_long") && doc.containsKey("drone_altitude")) {
-                    g_drone_lat  = doc["drone_lat"];
-                    g_drone_lon  = doc["drone_long"];
-                    g_drone_alt  = doc["drone_altitude"];
-                }
-                if (doc.containsKey("pilot_lat") && doc.containsKey("pilot_long")) {
-                    g_pilot_lat  = doc["pilot_lat"];
-                    g_pilot_lon  = doc["pilot_long"];
-                }
-                g_has_data   = true;
-                // Serial.println("JSON updated");
-                // Serial.println("Immediate beacon after JSON update");
-                // update ESP32 AP SSID to match new RID or fallback
-                if (broadcastEnabled) {
-                    wifi_config_t ap_cfg = {};
-                    char apSsidBuf[ODID_ID_SIZE + 10];
-                    size_t apSsidLen;
-                    // fallback to static SSID if no Basic ID
-                    if (g_basic_id[0] == '\0') {
-                        memcpy(apSsidBuf, BEACON_SSID, BEACON_SSID_LEN);
-                        apSsidBuf[BEACON_SSID_LEN] = '\0';
-                        apSsidLen = BEACON_SSID_LEN;
-                    } else {
-                        apSsidLen = snprintf(apSsidBuf, sizeof(apSsidBuf), "RID-%s", g_basic_id);
-                    }
-                    memcpy(ap_cfg.ap.ssid, apSsidBuf, apSsidLen);
-                    ap_cfg.ap.ssid_len       = uint8_t(apSsidLen);
-                    ap_cfg.ap.channel        = AP_CHANNEL;
-                    ap_cfg.ap.authmode       = WIFI_AUTH_OPEN;
-                    ap_cfg.ap.max_connection = 4;
-                    ESP_ERROR_CHECK( esp_wifi_set_config(WIFI_IF_AP, &ap_cfg) );
-                    ESP_ERROR_CHECK( esp_wifi_set_channel(AP_CHANNEL, WIFI_SECOND_CHAN_NONE) );
-                }
+            if (doc.containsKey("led_mute")) {
+                ledMuted = doc["led_mute"].as<bool>();
+                if (ledMuted) ledOff();
+            }
 
-                // Check for dynamic MAC override
-                if (doc.containsKey("mac")) {
-                    const char* jsonMac = doc["mac"] | "";
-                    if (strlen(jsonMac) == 17) {
-                        unsigned int b[6];
-                        if (sscanf(jsonMac, "%02x:%02x:%02x:%02x:%02x:%02x",
-                                   &b[0], &b[1], &b[2], &b[3], &b[4], &b[5]) == 6) {
-                            for (int i = 0; i < 6; ++i) g_override_src_mac[i] = (uint8_t)b[i];
-                            g_dynamic_override = true;
-                        }
-                    } else {
-                        // malformed or empty override disables override
-                        g_dynamic_override = false;
-                    }
-                }
-                // Check for stop command or empty path to disable broadcasting
-                const char* action = doc["action"] | nullptr;
-                if (action) {
-                    if (strcmp(action, "stop") == 0) {
-                        // Stop all broadcasting
-                        broadcastEnabled = false;
-                        g_has_data = false;
-                        Serial.println("STOP received: broadcasts disabled");
-                    }
-                    else if (strcmp(action, "start") == 0) {
-                        // Restart broadcasting on new mission
-                        broadcastEnabled = true;
-                        g_has_data = true;
-                        Serial.println("START received: broadcasts enabled");
-                    }
-                    else if (strcmp(action, "pause") == 0) {
-                        // Freeze location but continue broadcasting last-known position
-                        Serial.println("PAUSE received: position frozen");
-                    }
-                }
-                // If mission path is empty array, also stop
-                if (doc.containsKey("path")) {
-                    JsonArray path = doc["path"].as<JsonArray>();
-                    if (path && path.size() == 0) {
-                        g_has_data = false;
-                    }
-                }
+            if (doc.containsKey("basic_id")) {
+                strncpy(g_basic_id, doc["basic_id"] | "", ODID_ID_SIZE);
+                g_basic_id[ODID_ID_SIZE] = '\0';
+            }
 
-                // only inject immediately if still broadcasting
-                if (broadcastEnabled && g_has_data) {
-                    inject_vendor_ie(
-                        g_basic_id,
-                        g_drone_lat, g_drone_lon,
-                        g_drone_alt,
-                        g_pilot_lat, g_pilot_lon
-                    );
-                    lastTx = millis(); // reset interval timer
+            if (doc.containsKey("drone_lat") && doc.containsKey("drone_long") && doc.containsKey("drone_altitude")) {
+                g_drone_lat = doc["drone_lat"];
+                g_drone_lon = doc["drone_long"];
+                g_drone_alt = doc["drone_altitude"];
+            }
+
+            if (doc.containsKey("pilot_lat") && doc.containsKey("pilot_long")) {
+                g_pilot_lat = doc["pilot_lat"];
+                g_pilot_lon = doc["pilot_long"];
+            }
+
+            g_has_data = true;
+
+            if (doc.containsKey("mac")) {
+                const char *m = doc["mac"] | "";
+                if (!parse_mac(m, g_override_src_mac))
+                    g_dynamic_override = false;
+                else
+                    g_dynamic_override = true;
+            }
+
+            const char *action = doc["action"].as<const char *>();
+            if (action) {
+                Serial.printf("CMD: %s\n", action);
+
+                if (strcmp(action, "stop") == 0) {
+                    broadcastEnabled = false;
+                    g_has_data = false;
+                    clear_vendor_ie();
+                    stopBeep();
+                    ledOff();
+                    Serial.println("STOP: broadcasts off");
+                } else if (strcmp(action, "start") == 0) {
+                    broadcastEnabled = true;
+                    g_has_data = true;
+                    update_ap_ssid();
+                    startBeep();
+                    ledFlash(150);
+                    Serial.println("START: broadcasts on");
+                } else if (strcmp(action, "pause") == 0) {
+                    beep(1500, 80);
+                    Serial.println("PAUSE: position frozen");
                 }
-            } else {
-                // Serial.print("JSON parse error: ");
-                // Serial.print(err.c_str());
-                // Serial.print(" | Input: ");
-                // Serial.println(json_buf);
+            }
+
+            if (broadcastEnabled) update_ap_ssid();
+
+            if (doc.containsKey("path")) {
+                JsonArray p = doc["path"].as<JsonArray>();
+                if (p && p.size() == 0) g_has_data = false;
             }
         } else {
             json_buf[json_idx++] = c;
         }
     }
 
-    // 2) Periodically transmit using last JSON data
-    // only transmit if broadcasting is enabled and we have data
     if (!broadcastEnabled || !g_has_data) {
         delay(10);
         return;
     }
-    if (millis() - lastTx >= TX_INTERVAL) {
-        inject_vendor_ie(
-            g_basic_id,
-            g_drone_lat, g_drone_lon,
-            g_drone_alt,
-            g_pilot_lat, g_pilot_lon
-        );
+
+    if (millis() - lastTx >= TX_INTERVAL_MS) {
         lastTx = millis();
-        // Serial.println("Beacon injected");
+        inject_odid(g_basic_id, g_drone_lat, g_drone_lon, g_drone_alt, g_pilot_lat, g_pilot_lon);
+        heartbeatTick();
+        ledFlash(20);
+        Serial.printf("TX lat=%.4f lon=%.4f alt=%d\n", g_drone_lat, g_drone_lon, g_drone_alt);
     }
 }
