@@ -180,13 +180,6 @@ Part of the [OUI Spy](https://github.com/colonelpanichacks/oui-spy) hardware & f
 | **Remote-ID-Spoofer** *(this repo)* | Remote ID spoofer & simulator with swarm mode | ESP32-S3 / ESP32-C5 |
 | [OUI-SPY UniPwn](https://github.com/colonelpanichacks/Oui-Spy-UniPwn) | Unitree robot BLE exploitation with AutoPwn and web UI | ESP32-S3 |
 
-### Watch Firmwares
-
-| Firmware | Description | Board |
-|----------|-------------|-------|
-| [OUI Spy Watch Drone](https://github.com/colonelpanichacks/ouispy-watch-drone) | Drone Remote ID scanner for wrist | Waveshare ESP32-S3 Touch LCD 1.69 |
-| [Watch OUI Spy Remote ID](https://github.com/colonelpanichacks/watch-ouispy-remoteid) | Remote ID mapper with QR code output | Waveshare ESP32-S3 Touch LCD 1.69 |
-
 ## Credits
 
 - [colonelpanic.tech](https://colonelpanic.tech)
