@@ -154,16 +154,15 @@ PORT_SELECT_HTML = """
         </select>
       </div>
       {% endfor %}
-      <button type="submit">Initialize Connections</button>
+      <button type="submit" style="padding:28px 60px;font-size:clamp(22px,3vw,36px);letter-spacing:6px;max-width:660px;">LAUNCH MAP</button>
     </form>
     {% if boards_connected > 0 %}
     <div class="status-bar" style="color:#0f0;">
       {{ boards_connected }} BOARD{{ 'S' if boards_connected > 1 else '' }} CONNECTED <span class="blink">_</span>
-      &nbsp;<button onclick="window.location='/map'" style="display:inline;width:auto;padding:10px 20px;font-size:clamp(13px,1.4vw,16px);letter-spacing:2px;">LAUNCH MAP</button>
     </div>
     {% else %}
     <div class="status-bar">
-      SYS.READY <span class="blink">_</span> &nbsp; // SELECT AT LEAST ONE BOARD
+      SYS.READY <span class="blink">_</span>
     </div>
     {% endif %}
   </div>
@@ -1279,8 +1278,7 @@ def index():
                 s = None
             new_boards.append({'port': port, 'ser': s, 'lock': threading.Lock(), 'label': label})
         boards = new_boards
-        if len(boards) > 0:
-            return redirect(url_for('map_view'))
+        return redirect(url_for('map_view'))
     active_ports = [boards[i]['port'] if i < len(boards) else '' for i in range(MAX_BOARDS)]
     active_labels = [boards[i]['label'] if i < len(boards) else 'S3' for i in range(MAX_BOARDS)]
     bc = sum(1 for b in boards if b['ser'] and b['ser'].is_open)
@@ -1290,9 +1288,10 @@ def index():
 
 @app.route('/map')
 def map_view():
-    if len(boards) == 0:
-        return redirect(url_for('index'))
-    return render_template_string(HTML)
+    resp = app.make_response(render_template_string(HTML))
+    resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    resp.headers['Pragma'] = 'no-cache'
+    return resp
 
 def _write_one(board, data_str):
     """Write to a single board with reconnect logic."""
