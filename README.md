@@ -79,6 +79,8 @@ This project provides:
 - AP Beacon Vendor Information Elements via `esp_wifi_set_vendor_ie`
 - 1Hz broadcast rate matching real Remote ID transmitters
 - Proper ODID message pack encoding (Basic ID, Location/Vector, System, Operator ID)
+- **Dual-band on ESP32-C5**: 2.4GHz + 5GHz (UNII-3: ch149, 153, 157, 161, 165) with per-channel toggles
+- Band mode selector: 2.4 Only, 5GHz Only, or Dual Band
 
 ### Status Ticker
 - Red pulsing "SPOOFING ACTIVE" banner with live TX count during broadcast
@@ -87,12 +89,18 @@ This project provides:
 
 ## Hardware
 
-### Required
-- **Seeed Studio XIAO ESP32-S3** microcontroller
+### Supported Boards
+
+| Board | WiFi | 5GHz | Buzzer | LED |
+|-------|------|------|--------|-----|
+| **Seeed XIAO ESP32-C5** | WiFi 6 | 2.4 + 5GHz | GPIO25 (D2) | GPIO27 (active HIGH) |
+| **Seeed XIAO ESP32-S3** | WiFi 4 | 2.4GHz only | GPIO3 (D2) | GPIO21 (active LOW) |
+
+Pin mapping and band capability auto-detected at compile time.
 
 ### Optional
-- Passive buzzer on GPIO3 (D2) for audio feedback
-- Built-in LED on GPIO21 (active LOW) for visual feedback
+- Passive buzzer on D2 pin for audio feedback
+- Built-in LED for visual feedback
 
 ## Getting Started
 
@@ -103,9 +111,13 @@ cd Remote-ID-Spoofer
 ```
 
 ### 2. Flash Firmware
-Connect the XIAO ESP32-S3 via USB and flash with PlatformIO:
+Connect via USB and flash with PlatformIO:
 ```bash
-pio run -t upload
+# ESP32-C5 (dual-band)
+pio run -e seeed_xiao_esp32c5 -t upload
+
+# ESP32-S3 (single-band)
+pio run -e seeed_xiao_esp32s3 -t upload
 ```
 
 ### 3. Install Python Dependencies
@@ -155,7 +167,7 @@ This is one of several OUI Spy firmwares for the Seeed Studio XIAO platform:
 |----------|-------------|-------|
 | [OUI Spy Unified](https://github.com/colonelpanichacks/oui-spy-unified-blue) | BLE + WiFi device detector | ESP32-S3 / ESP32-C5 |
 | [Sky Spy](https://github.com/colonelpanichacks/Sky-Spy) | Remote ID drone detector | ESP32-S3 / ESP32-C5 |
-| **Remote-ID-Spoofer** | Remote ID spoofer & simulator | ESP32-S3 |
+| **Remote-ID-Spoofer** | Remote ID spoofer & simulator | ESP32-S3 / ESP32-C5 |
 | [Flock You](https://github.com/colonelpanichacks/flock-you) | BLE spam / Flipper detection | ESP32-S3 |
 
 ## Credits

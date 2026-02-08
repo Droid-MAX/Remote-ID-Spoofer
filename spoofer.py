@@ -332,6 +332,7 @@ HTML = """
     box-shadow:0 0 10px rgba(0,255,136,0.1);
   }
   .toggle-btn:hover{filter:brightness(1.25);}
+  .ch-toggle{padding:5px 10px;font-size:12px;letter-spacing:0.5px;min-width:44px;text-align:center;}
 
   /* ── option row (label + dropdown) ── */
   .opt-row{
@@ -504,6 +505,19 @@ HTML = """
     <div class="section-title">Hardware</div>
     <div class="ctrl-row"><span class="cr-label">Buzzer</span><span class="toggle-btn on" id="buzzerToggle" onclick="flipToggle(this);toggleHw('buzzer',!this.classList.contains('on'))">ON</span><span style="width:8px"></span><span class="cr-label">LED</span><span class="toggle-btn on" id="ledToggle" onclick="flipToggle(this);toggleHw('led',!this.classList.contains('on'))">ON</span></div>
 
+    <div class="section-title">Band Configuration</div>
+    <div class="opt-row"><span class="cr-label">TX Band</span><select id="bandMode" onchange="sendBandConfig()"><option value="2">Dual Band</option><option value="0">2.4 GHz Only</option><option value="1">5 GHz Only</option></select></div>
+    <div id="fiveGhzChannels" style="margin:6px 0;">
+      <div style="font-size:11px;color:rgba(125,249,255,0.35);letter-spacing:1px;margin-bottom:6px;">5GHZ CHANNELS</div>
+      <div style="display:flex;gap:4px;flex-wrap:wrap;">
+        <span class="toggle-btn on ch-toggle" id="ch149" onclick="flipToggle(this);sendBandConfig()">149</span>
+        <span class="toggle-btn on ch-toggle" id="ch153" onclick="flipToggle(this);sendBandConfig()">153</span>
+        <span class="toggle-btn on ch-toggle" id="ch157" onclick="flipToggle(this);sendBandConfig()">157</span>
+        <span class="toggle-btn on ch-toggle" id="ch161" onclick="flipToggle(this);sendBandConfig()">161</span>
+        <span class="toggle-btn on ch-toggle" id="ch165" onclick="flipToggle(this);sendBandConfig()">165</span>
+      </div>
+    </div>
+
     <div class="section-title">Realistic Variations</div>
     <div class="ctrl-row"><span class="cr-label" style="flex:1;color:rgba(125,249,255,0.6);">Master</span><span class="toggle-btn on" id="masterVariation" onclick="flipToggle(this);toggleMaster(this.classList.contains('on'))">ON</span></div>
     <div class="divider"></div>
@@ -526,6 +540,7 @@ HTML = """
         <div class="telem-item"><span class="tl">Pilot Lat</span><span class="tv" id="tPLat">--</span></div>
         <div class="telem-item"><span class="tl">Pilot Lng</span><span class="tv" id="tPLng">--</span></div>
         <div class="telem-item"><span class="tl">TX #</span><span class="tv" id="tTxCount">0</span></div>
+        <div class="telem-item"><span class="tl">Band</span><span class="tv" id="tBand">--</span></div>
         <div class="telem-item"><span class="tl">State</span><span class="tv" id="tState">IDLE</span></div>
       </div>
     </div>
@@ -598,9 +613,11 @@ function updateTicker(state){
   if(state==='playing'){
     tickerCount=0;
     tickerEl.className='';tickerEl.style.display='block';
-    tickerEl.innerHTML='<span class="ticker-dot"></span>SPOOFING ACTIVE -- TX 0';
+    var bm=parseInt(document.getElementById('bandMode').value);
+    var bstr=bm===0?'2.4G':bm===1?'5G':'DUAL';
+    tickerEl.innerHTML='<span class="ticker-dot"></span>SPOOFING ACTIVE ['+bstr+'] -- TX 0';
     if(tickerInterval)clearInterval(tickerInterval);
-    tickerInterval=setInterval(function(){tickerEl.innerHTML='<span class="ticker-dot"></span>SPOOFING ACTIVE -- TX '+tickerCount;},500);
+    tickerInterval=setInterval(function(){var bm2=parseInt(document.getElementById('bandMode').value);var bs=bm2===0?'2.4G':bm2===1?'5G':'DUAL';tickerEl.innerHTML='<span class="ticker-dot"></span>SPOOFING ACTIVE ['+bs+'] -- TX '+tickerCount;},500);
   }else if(state==='paused'){
     if(tickerInterval){clearInterval(tickerInterval);tickerInterval=null;}
     tickerEl.className='paused';tickerEl.style.display='block';
@@ -999,6 +1016,8 @@ function updateTelemetry(p){
   if(plat)plat.textContent=p.pilot_lat?p.pilot_lat.toFixed(6):'--';
   if(plng)plng.textContent=p.pilot_long?p.pilot_long.toFixed(6):'--';
   if(txc)txc.textContent=tickerCount;
+  var bandEl=document.getElementById('tBand');
+  if(bandEl){var bm=parseInt(document.getElementById('bandMode').value);bandEl.textContent=bm===0?'2.4G':bm===1?'5G':'DUAL';bandEl.style.color=bm===2?'#7DF9FF':bm===1?'#FF00FF':'#00ff88';}
   if(st){var s=missionState==='playing'?'TRANSMITTING':missionState==='paused'?'PAUSED':'IDLE';st.textContent=s;if(s==='TRANSMITTING')st.style.color='#00ff88';else if(s==='PAUSED')st.style.color='#ffa500';else st.style.color='rgba(255,255,255,0.15)';}
   updateSwarmTelemetry(p);
 }
@@ -1026,7 +1045,7 @@ function updateSwarmTelemetry(lastPayload){
 
 function clearTelemetry(){
   var box=document.getElementById('telemBox');if(box)box.className='telem-box idle';
-  ['tRid','tAlt','tLat','tLng','tPLat','tPLng'].forEach(function(id){var e=document.getElementById(id);if(e)e.textContent='--';});
+  ['tRid','tAlt','tLat','tLng','tPLat','tPLng','tBand'].forEach(function(id){var e=document.getElementById(id);if(e)e.textContent='--';});
   var txc=document.getElementById('tTxCount');if(txc)txc.textContent='0';
   var st=document.getElementById('tState');if(st)st.textContent='IDLE';
   var sbox=document.getElementById('swarmTelemBox');if(sbox)sbox.className='telem-box idle';
@@ -1039,6 +1058,15 @@ function sendCommand(endpoint,cb){
 
 function toggleHw(type,muted){
   fetch('/api/'+type,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({muted:muted})}).catch(console.error);
+}
+
+function sendBandConfig(){
+  var mode=parseInt(document.getElementById('bandMode').value);
+  var chIds=['ch149','ch153','ch157','ch161','ch165'];
+  var channels=chIds.map(function(id){return document.getElementById(id).classList.contains('on');});
+  var show5=mode===1||mode===2;
+  document.getElementById('fiveGhzChannels').style.display=show5?'block':'none';
+  fetch('/api/band',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({band_mode:mode,channels_5g:channels})}).catch(console.error);
 }
 
 // ── movement animation ──
@@ -1359,6 +1387,19 @@ def led_toggle():
     muted = data.get('muted', False) if data else False
     safe_serial_write(json.dumps({"led_mute": muted}))
     return jsonify(status='ok', muted=muted)
+
+@app.route('/api/band', methods=['POST'])
+def band_config():
+    data = request.get_json()
+    if not data:
+        return jsonify(status='error', msg='no payload'), 400
+    payload = {}
+    if 'band_mode' in data:
+        payload['band_mode'] = data['band_mode']
+    if 'channels_5g' in data:
+        payload['channels_5g'] = data['channels_5g']
+    safe_serial_write(json.dumps(payload))
+    return jsonify(status='ok')
 
 @app.route('/api/serial_status', methods=['GET'])
 def serial_status():
