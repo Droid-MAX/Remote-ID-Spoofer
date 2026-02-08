@@ -174,9 +174,9 @@ Part of the [OUI Spy](https://github.com/colonelpanichacks/oui-spy) hardware & f
 | Firmware | Description | Board |
 |----------|-------------|-------|
 | [OUI-SPY Detector](https://github.com/colonelpanichacks/ouispy-detector) | Multi-target BLE scanner with OUI filtering and web config | ESP32-S3 |
-| [OUI-SPY Foxhunter](https://github.com/colonelpanichacks/ouispy-foxhunter) | Precision proximity tracker for RF direction finding | ESP32-S3 |
+| [OUI-SPY Foxhunter](https://github.com/colonelpanichacks/ouispy-foxhunter) | Precision BLE proximity tracker for radio direction finding | ESP32-S3 |
 | [Flock-You](https://github.com/colonelpanichacks/flock-you) | Flock Safety & Raven surveillance detector with GPS wardriving | ESP32-S3 |
-| [Sky Spy](https://github.com/colonelpanichacks/Sky-Spy) | Drone Remote ID detector — WiFi + BLE, multi-drone tracking | ESP32-S3 / ESP32-C5 |
+| [Sky Spy](https://github.com/colonelpanichacks/Sky-Spy) | Drone Remote ID detector — WiFi + BLE, multi-drone tracking | ESP32-S3 |
 | **Remote-ID-Spoofer** *(this repo)* | Remote ID spoofer & simulator with swarm mode | ESP32-S3 / ESP32-C5 |
 | [OUI-SPY UniPwn](https://github.com/colonelpanichacks/Oui-Spy-UniPwn) | Unitree robot BLE exploitation with AutoPwn and web UI | ESP32-S3 |
 
