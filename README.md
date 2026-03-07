@@ -93,13 +93,14 @@ This project provides:
 
 | Board | WiFi | 5GHz | Buzzer | LED |
 |-------|------|------|--------|-----|
-| **Seeed XIAO ESP32-C5** | WiFi 6 | 2.4 + 5GHz | GPIO25 (D2) | GPIO27 (active HIGH) |
 | **Seeed XIAO ESP32-S3** | WiFi 4 | 2.4GHz only | GPIO3 (D2) | GPIO21 (active LOW) |
+| **LuatOS ESP32-C3** | WiFi 4 | 2.4GHz only | GPIO8 | GPIO12 (D4, active HIGH) |
+| **Seeed XIAO ESP32-C5** | WiFi 6 | 2.4 + 5GHz | GPIO25 (D2) | GPIO27 (active HIGH) |
 
 Pin mapping and band capability auto-detected at compile time.
 
 ### Optional
-- Passive buzzer on D2 pin for audio feedback
+- Passive buzzer for audio feedback
 - Built-in LED for visual feedback
 
 ## Getting Started
@@ -113,11 +114,14 @@ cd Remote-ID-Spoofer
 ### 2. Flash Firmware
 Connect via USB and flash with PlatformIO:
 ```bash
-# ESP32-C5 (dual-band)
-pio run -e seeed_xiao_esp32c5 -t upload
-
 # ESP32-S3 (single-band)
 pio run -e seeed_xiao_esp32s3 -t upload
+
+# ESP32-C3 (single-band)
+pio run -e luatos_esp32c3 -t upload
+
+# ESP32-C5 (dual-band)
+pio run -e seeed_xiao_esp32c5 -t upload
 ```
 
 ### 3. Install Python Dependencies
