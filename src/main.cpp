@@ -18,6 +18,15 @@
   #define LED_OFF     LOW
   #define DUAL_BAND   true
   #define BOARD_NAME  "XIAO ESP32-C5 (Dual-Band)"
+
+#elif defined(LUATOS_ESP32C3)
+  #define BUZZER_PIN  8
+  #define LED_PIN     12
+  #define LED_ON      HIGH
+  #define LED_OFF     LOW
+  #define DUAL_BAND   false
+  #define BOARD_NAME  "LuatOS ESP32-C3 (2.4GHz)"
+
 #else
   #define BUZZER_PIN  3
   #define LED_PIN     21
