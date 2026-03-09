@@ -76,7 +76,6 @@ This project provides:
 ### Broadcast
 - WiFi NAN Action Frames (primary ASTM F3411 transport)
 - WiFi NAN Sync Beacons
-- AP Beacon Vendor Information Elements via `esp_wifi_set_vendor_ie`
 - 1Hz broadcast rate matching real Remote ID transmitters
 - Proper ODID message pack encoding (Basic ID, Location/Vector, System, Operator ID)
 - **Dual-band on ESP32-C5**: 2.4GHz + 5GHz (UNII-3: ch149, 153, 157, 161, 165) with per-channel toggles
