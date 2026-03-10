@@ -11,6 +11,10 @@
 #include "opendroneid.h"
 #include "odid_wifi.h"
 
+#ifdef ENABLE_BLE
+#include "ble.h"
+#endif
+
 // ── board auto-detect ──
 #if defined(ARDUINO_XIAO_ESP32C5)
   #define BUZZER_PIN  25
@@ -200,6 +204,18 @@ static void broadcast_all_drones() {
             }
         }
     }
+
+#ifdef ENABLE_BLE
+    if (!g_drones.empty()) {
+        for (const auto& drone : g_drones) {
+            ble_update(drone.basic_id, drone.drone_lat, drone.drone_lon, drone.drone_alt,
+                       drone.pilot_lat, drone.pilot_lon);
+            delay(20);
+        }
+    } else {
+        ble_stop();
+    }
+#endif
 }
 
 static bool parse_mac(const char *str, uint8_t *out) {
@@ -281,6 +297,10 @@ void setup() {
     for (int i = 0; i < NUM_5G_CHANNELS; i++)
         Serial.printf("%d%s", CHANNELS_5G[i], i < NUM_5G_CHANNELS - 1 ? "," : "\n");
     #endif
+
+#ifdef ENABLE_BLE
+    ble_init();
+#endif
 
     ledFlash(100);
     Serial.println("Ready. Awaiting serial commands.\n");
@@ -387,6 +407,9 @@ void loop() {
                 if (strcmp(action, "stop") == 0) {
                     broadcastEnabled = false;
                     g_drones.clear();
+#ifdef ENABLE_BLE
+                    ble_stop();
+#endif
                     stopBeep();
                     ledOff();
                     Serial.println("STOP: broadcasts off");

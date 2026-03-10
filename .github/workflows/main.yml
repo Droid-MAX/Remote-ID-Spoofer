@@ -32,7 +32,9 @@ jobs:
           cache: 'pip'
 
       - name: Install PlatformIO Core
-        run: pip install --upgrade platformio
+        run: |
+          pip install --upgrade platformio
+          pip install intelhex
 
       - name: Build PlatformIO Project
         run: pio run -e luatos_esp32c3
