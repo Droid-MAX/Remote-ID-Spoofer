@@ -1,9 +1,7 @@
 #ifdef ENABLE_BLE
 
 #include <Arduino.h>
-#include <BLEDevice.h>
-#include <BLEUtils.h>
-#include <BLEAdvertising.h>
+#include <NimBLEDevice.h>
 #include "ble.h"
 #include "opendroneid.h"
 
@@ -26,21 +24,21 @@ static uint16_t calculateCRC16(const uint8_t* data, size_t len) {
     return crc;
 }
 
-static BLEServer* pBLEServer = nullptr;
-static BLEAdvertising* pBLEAdvertising = nullptr;
+static NimBLEServer* pBLEServer = nullptr;
+static NimBLEAdvertising* pBLEAdvertising = nullptr;
 static bool bleInitialized = false;
 
 void ble_init(void) {
-    BLEDevice::init("SzDjiTech");
-    pBLEServer = BLEDevice::createServer();
+    NimBLEDevice::init("SzDjiTech");
+    pBLEServer = NimBLEDevice::createServer();
     pBLEAdvertising = pBLEServer->getAdvertising();
 
-    pBLEAdvertising->setAdvertisementType(ADV_TYPE_NONCONN_IND);
+    pBLEAdvertising->setAdvertisementType(0x03);  // ADV_TYPE_NONCONN_IND
     pBLEAdvertising->setMinInterval(0x06);
     pBLEAdvertising->setMaxInterval(0x10);
-    pBLEAdvertising->setAdvertisementChannelMap((esp_ble_adv_channel_t)(ADV_CHNL_37 | ADV_CHNL_38 | ADV_CHNL_39));
+    pBLEAdvertising->setChannelMap(0x07);         // 37,38,39
 
-    BLEAdvertisementData advData;
+    NimBLEAdvertisementData advData;
     advData.setFlags(0x06);  // LE General Discoverable Mode + BR/EDR Not Supported
     pBLEAdvertising->setAdvertisementData(advData);
     pBLEAdvertising->start();
@@ -144,7 +142,7 @@ void ble_update(const char* basic_id, double lat, double lon, int alt,
             payload += (char)(crc >> 8);
             payload += (char)(crc & 0xFF);
 
-            BLEAdvertisementData advData;
+            NimBLEAdvertisementData advData;
             advData.setFlags(0x06);
             advData.addData(payload);
             pBLEAdvertising->stop();
@@ -162,7 +160,7 @@ void ble_update(const char* basic_id, double lat, double lon, int alt,
         payload += (char)(crc >> 8);
         payload += (char)(crc & 0xFF);
 
-        BLEAdvertisementData advData;
+        NimBLEAdvertisementData advData;
         advData.setFlags(0x06);
         advData.addData(payload);
         pBLEAdvertising->stop();
@@ -174,7 +172,7 @@ void ble_update(const char* basic_id, double lat, double lon, int alt,
 void ble_stop(void) {
     if (!bleInitialized) return;
     pBLEAdvertising->stop();
-    BLEAdvertisementData empty;
+    NimBLEAdvertisementData empty;
     pBLEAdvertising->setAdvertisementData(empty);
     pBLEAdvertising->start();
 }
