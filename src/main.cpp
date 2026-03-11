@@ -17,21 +17,18 @@
 
 // ── board auto-detect ──
 #if defined(ARDUINO_XIAO_ESP32C5)
-  #define BUZZER_PIN  25
   #define LED_PIN     27
   #define LED_ON      HIGH
   #define LED_OFF     LOW
   #define DUAL_BAND   true
   #define BOARD_NAME  "XIAO ESP32-C5 (Dual-Band)"
 #elif defined(LUATOS_ESP32C3)
-  #define BUZZER_PIN  8
   #define LED_PIN     12
   #define LED_ON      HIGH
   #define LED_OFF     LOW
   #define DUAL_BAND   false
   #define BOARD_NAME  "LuatOS ESP32-C3 (2.4GHz)"
 #else
-  #define BUZZER_PIN  3
   #define LED_PIN     21
   #define LED_ON      LOW
   #define LED_OFF     HIGH
@@ -52,7 +49,6 @@ static uint8_t g_band_mode = DUAL_BAND ? 2 : 0;
 static bool    g_5g_ch_enabled[5] = {true, true, true, true, true};
 
 static bool    broadcastEnabled = false;
-static bool    buzzerMuted = false;
 static bool    ledMuted    = false;
 static const uint16_t TX_INTERVAL_MS = 1000;
 
@@ -69,44 +65,6 @@ struct DroneInfo {
 };
 
 static std::vector<DroneInfo> g_drones;
-
-// ── Buzzer ──
-static void beep(int freq, int ms) {
-    if (buzzerMuted) return;
-    tone(BUZZER_PIN, freq, ms);
-    delay(ms);
-    noTone(BUZZER_PIN);
-}
-
-static void playBootSound() {
-    if (buzzerMuted) return;
-    int notes[]     = { 262, 523, 220, 440, 233, 466 };
-    int durations[] = {  80,  80,  80,  80,  80,  80 };
-    for (int i = 0; i < 6; i++) {
-        tone(BUZZER_PIN, notes[i], durations[i]);
-        delay(durations[i] + 10);
-        noTone(BUZZER_PIN);
-    }
-}
-
-static void startBeep() {
-    beep(1200, 60); delay(40);
-    beep(1600, 60); delay(40);
-    beep(2200, 80);
-}
-
-static void stopBeep() {
-    beep(2000, 60); delay(40);
-    beep(1400, 60); delay(40);
-    beep(800, 100);
-}
-
-static void heartbeatTick() {
-    if (buzzerMuted) return;
-    tone(BUZZER_PIN, 2400, 15);
-    delay(15);
-    noTone(BUZZER_PIN);
-}
 
 // ── LED ──
 static void ledOn()  { if (!ledMuted) digitalWrite(LED_PIN, LED_ON); }
@@ -268,13 +226,10 @@ void setup() {
     #endif
     Serial.println("========================================\n");
 
-    pinMode(BUZZER_PIN, OUTPUT);
-    digitalWrite(BUZZER_PIN, LOW);
     pinMode(LED_PIN, OUTPUT);
     ledOff();
 
     delay(300);
-    playBootSound();
     ledFlash(200);
 
     ESP_ERROR_CHECK(esp_netif_init());
@@ -327,11 +282,6 @@ void loop() {
 
             if (doc.containsKey("path") && !doc.containsKey("drone_lat") && !doc.containsKey("action"))
                 continue;
-
-            if (doc.containsKey("buzzer_mute")) {
-                buzzerMuted = doc["buzzer_mute"].as<bool>();
-                if (buzzerMuted) noTone(BUZZER_PIN);
-            }
 
             if (doc.containsKey("led_mute")) {
                 ledMuted = doc["led_mute"].as<bool>();
@@ -410,16 +360,13 @@ void loop() {
 #ifdef ENABLE_BLE
                     ble_stop();
 #endif
-                    stopBeep();
                     ledOff();
                     Serial.println("STOP: broadcasts off");
                 } else if (strcmp(action, "start") == 0) {
                     broadcastEnabled = true;
-                    startBeep();
                     ledFlash(150);
                     Serial.println("START: broadcasts on");
                 } else if (strcmp(action, "pause") == 0) {
-                    beep(1500, 80);
                     Serial.println("PAUSE: position frozen");
                 }
             }
@@ -433,7 +380,6 @@ void loop() {
         if (millis() - lastTx >= TX_INTERVAL_MS) {
             lastTx = millis();
             broadcast_all_drones();
-            heartbeatTick();
             ledFlash(20);
             const char *bstr = g_band_mode == 0 ? "2.4G" : g_band_mode == 1 ? "5G" : "DUAL";
             Serial.printf("Swarm TX: %zu drones, band=%s\n", g_drones.size(), bstr);
