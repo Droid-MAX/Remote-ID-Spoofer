@@ -36,7 +36,6 @@ void ble_init(void) {
     pBLEAdvertising->setAdvertisementType(0x03);  // ADV_TYPE_NONCONN_IND
     pBLEAdvertising->setMinInterval(0x06);
     pBLEAdvertising->setMaxInterval(0x10);
-    pBLEAdvertising->setChannelMap(0x07);         // 37,38,39
 
     NimBLEAdvertisementData advData;
     advData.setFlags(0x06);  // LE General Discoverable Mode + BR/EDR Not Supported
