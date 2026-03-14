@@ -10,6 +10,7 @@ extern "C" {
 void ble_init(void);
 void ble_update(const char* basic_id, double lat, double lon, int alt, double pilot_lat, double pilot_lon);
 void ble_stop(void);
+void ble_mux_init(void);
 
 #ifdef __cplusplus
 }

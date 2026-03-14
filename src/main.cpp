@@ -254,6 +254,7 @@ void setup() {
     #endif
 
 #ifdef ENABLE_BLE
+    ble_mux_init();
     ble_init();
 #endif
 
